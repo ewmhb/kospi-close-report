@@ -1,0 +1,4 @@
+pykrx==1.0.51
+yfinance==0.2.65
+feedparser==6.0.11
+
