@@ -1,0 +1,50 @@
+name: KOSPI close report
+
+on:
+  workflow_dispatch:
+  schedule:
+    # 16:20 KST, Monday-Friday (GitHub cron uses UTC)
+    - cron: "20 7 * * 1-5"
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  report:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - id: generate
+        run: |
+          summary=$(python scripts/generate_report.py | tail -n 1)
+          echo "summary=$summary" >> "$GITHUB_OUTPUT"
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+      - name: Deploy GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
+      - name: Send KakaoTalk notification
+        env:
+          KAKAO_REST_API_KEY: ${{ secrets.KAKAO_REST_API_KEY }}
+          KAKAO_CLIENT_SECRET: ${{ secrets.KAKAO_CLIENT_SECRET }}
+          KAKAO_REFRESH_TOKEN: ${{ secrets.KAKAO_REFRESH_TOKEN }}
+          REPORT_URL: ${{ steps.deployment.outputs.page_url }}
+          REPORT_SUMMARY: ${{ steps.generate.outputs.summary }}
+        run: python scripts/send_kakao.py
+
