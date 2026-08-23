@@ -30,6 +30,7 @@ jobs:
       - run: pip install -r requirements.txt
       - id: generate
         run: |
+          set -o pipefail
           summary=$(python scripts/generate_report.py | tail -n 1)
           echo "summary=$summary" >> "$GITHUB_OUTPUT"
       - uses: actions/configure-pages@v5
@@ -47,4 +48,3 @@ jobs:
           REPORT_URL: ${{ steps.deployment.outputs.page_url }}
           REPORT_SUMMARY: ${{ steps.generate.outputs.summary }}
         run: python scripts/send_kakao.py
-
