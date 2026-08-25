@@ -1,6 +1,6 @@
 from datetime import datetime, timedelta
 from email.utils import parsedate_to_datetime
-from html import escape
+from html import escape, unescape
 from html.parser import HTMLParser
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -75,6 +75,17 @@ def flow_html(now):
     rows="".join(f'<li><span>{name}</span>{signed(value,"억원","순매수" if value>0 else "순매도" if value<0 else "보합")}</li>' for name,value in flows.items())
     return f'<ul>{rows}</ul><p class="muted source">{date} · {source}{" · 실시간 조회 실패로 직전 정상값" if stale else ""} · 단위: 억원</p>'
 
+def breadth_naver(now):
+    raw=fetch("https://finance.naver.com/sise/sise_index.naver?code=KOSPI", "euc-kr")
+    text=re.sub(r"\s+", " ", unescape(re.sub(r"<[^>]+>", " ", raw)))
+    values={}
+    for key in ("상승","보합","하락"):
+        match=re.search(key+r"\s*(\d+)", text)
+        if not match: raise RuntimeError(f"네이버 시장폭 {key} 데이터 없음")
+        values[key]=int(match.group(1))
+    total=sum(values.values())
+    return {"date":now.strftime("%m.%d"),"up":values["상승"],"down":values["하락"],"flat":values["보합"],"ratio":round(values["상승"]/total*100,1),"source":"네이버 금융"}
+
 def breadth_krx(now):
     last=None
     for offset in range(8):
@@ -94,14 +105,21 @@ def technical():
     return {"current":float(c[-1]),"ma20":float(c[-20:].mean()),"ma60":float(c[-60:].mean()),"rsi":100 if loss==0 else 100-100/(1+gain/loss)}
 def health_html(now):
     stale=False
-    try: b=breadth_krx(now); save(BREADTH_CACHE,b)
-    except Exception as exc: print(f"시장폭 조회 실패: {exc}"); b=load(BREADTH_CACHE); stale=True
+    b=None
+    for fn in (breadth_naver,breadth_krx):
+        try: b=fn(now); save(BREADTH_CACHE,b); break
+        except Exception as exc: print(f"시장폭 조회 실패: {exc}")
+    if b is None:
+        try: b=load(BREADTH_CACHE); stale=True
+        except Exception: pass
     try: t=technical()
     except Exception as exc: print(f"기술지표 조회 실패: {exc}"); t=None
-    rows=f'<li><span>상승 / 하락</span><strong>{b["up"]} / {b["down"]}</strong></li><li><span>보합 · 상승비율</span><strong>{b["flat"]} · {b["ratio"]:.1f}%</strong></li>'
+    rows=""
+    if b: rows=f'<li><span>상승 / 하락</span><strong>{b["up"]} / {b["down"]}</strong></li><li><span>보합 · 상승비율</span><strong>{b["flat"]} · {b["ratio"]:.1f}%</strong></li>'
     if t:
         rows+=f'<li><span>20일선</span><strong>{t["ma20"]:,.2f} · {"상회" if t["current"]>=t["ma20"] else "하회"}</strong></li><li><span>60일선</span><strong>{t["ma60"]:,.2f} · {"상회" if t["current"]>=t["ma60"] else "하회"}</strong></li><li><span>RSI(14)</span><strong>{t["rsi"]:.1f}</strong></li>'
-    return f'<ul>{rows}</ul><p class="muted source">{b["date"]} · {b.get("source","KRX")}{" · 실시간 조회 실패로 직전 정상값" if stale else ""}</p>'
+    source=f'<p class="muted source">{b["date"]} · {b.get("source","저장값")}{" · 실시간 조회 실패로 직전 정상값" if stale else ""}</p>' if b else '<p class="muted source">시장폭 조회 실패 · 기술지표는 정상 표시</p>'
+    return f'<ul>{rows}</ul>{source}'
 
 def korea_10y_naver():
     p=TableRows(); p.feed(fetch("https://finance.naver.com/marketindex/interestDailyQuote.naver?marketindexCd=IRR_GOVT10Y&page=1", "euc-kr"))
@@ -112,7 +130,10 @@ def korea_10y_naver():
 def yield_html():
     stale=False
     try: d=korea_10y_naver(); save(YIELD_CACHE,d)
-    except Exception as exc: print(f"한국 국채 10년물 조회 실패: {exc}"); d=load(YIELD_CACHE); stale=True
+    except Exception as exc:
+        print(f"한국 국채 10년물 조회 실패: {exc}")
+        try: d=load(YIELD_CACHE); stale=True
+        except Exception: return '<div class="label">한국 국채 10년물</div><div class="value">–</div><div class="muted">조회 실패</div>'
     return f'<div class="label">한국 국채 10년물</div><div class="value">{d["value"]:.3f}%</div>{signed(d.get("change",0),"%p")}<div class="muted">{d["date"]} · {d.get("source","저장값")}{" · 직전 정상값" if stale else ""}</div>'
 
 def latest_news(now):
@@ -131,7 +152,10 @@ def latest_news(now):
 def news_html(now):
     stale=False
     try: items=latest_news(now)
-    except Exception as exc: print(f"주요뉴스 조회 실패: {exc}"); items=load(NEWS_CACHE)["items"]; stale=True
+    except Exception as exc:
+        print(f"주요뉴스 조회 실패: {exc}")
+        try: items=load(NEWS_CACHE)["items"]; stale=True
+        except Exception: return '<li><span class="muted">주요 뉴스를 불러오지 못했습니다.</span></li>'
     rows=[]
     for x in items:
         stamp=datetime.fromtimestamp(x.get("published",0),KST).strftime("%m.%d %H:%M") if x.get("published") else ""
