@@ -56,6 +56,10 @@ def main():
         raise RuntimeError(f"카카오 발송 실패: {result}")
     print("카카오톡 나에게 보내기 완료")
 
+    if os.environ.get("SEND_TO_FRIENDS", "false").lower() != "true":
+        print("수동 테스트 실행이므로 친구 발송을 건너뜁니다.")
+        return
+
     auth_headers = {"Authorization": f"Bearer {access_token}"}
     friends = get(
         "https://kapi.kakao.com/v1/api/talk/friends?limit=100&order=asc",
