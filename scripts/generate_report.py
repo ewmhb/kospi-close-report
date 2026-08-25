@@ -15,6 +15,14 @@ OUT, CACHE = Path("site/index.html"), Path("work/cache")
 FLOW_CACHE, BREADTH_CACHE = CACHE / "investor-flow.json", CACHE / "market-breadth.json"
 YIELD_CACHE, NEWS_CACHE = CACHE / "korea-10y-yield.json", CACHE / "news.json"
 LEADERS = {"삼성전자":("005930","005930.KS"),"SK하이닉스":("000660","000660.KS"),"현대차":("005380","005380.KS"),"삼성바이오로직스":("207940","207940.KS"),"LG에너지솔루션":("373220","373220.KS")}
+SECTORS = {
+    "반도체":("091230.KS","SK하이닉스","000660.KS"),
+    "건설":("117700.KS","현대건설","000720.KS"),
+    "바이오·헬스케어":("143860.KS","삼성바이오로직스","207940.KS"),
+    "자동차":("091180.KS","현대차","005380.KS"),
+    "2차전지":("305720.KS","LG에너지솔루션","373220.KS"),
+    "금융":("091170.KS","KB금융","105560.KS"),
+}
 
 class TableRows(HTMLParser):
     def __init__(self): super().__init__(); self.rows=[]; self.row=None; self.cell=None
@@ -158,6 +166,17 @@ def leader_history_html(code, now):
     return '<div class="stock-table-wrap"><table class="stock-table"><thead><tr><th>날짜</th><th>종가</th><th>개인</th><th>외국인</th><th>기관</th></tr></thead><tbody>'+rows+f'</tbody></table><div class="muted stock-note">순매수량 · 단위: 주 · {source}</div></div>'
 
 
+def sector_html():
+    cards=[]
+    for sector,(sector_ticker,stock_name,stock_ticker) in SECTORS.items():
+        try: sector_change=quote(sector_ticker)[1]
+        except Exception as exc: print(f"섹터 조회 실패({sector}): {exc}"); sector_change=0.0
+        try: stock_change=quote(stock_ticker)[1]
+        except Exception as exc: print(f"대표 종목 조회 실패({stock_name}): {exc}"); stock_change=0.0
+        cards.append(f'<div class="sector-item"><div class="sector-head"><strong>{escape(sector)}</strong>{signed(sector_change,"%")}</div><div class="sector-stock"><span>대표 종목 · {escape(stock_name)}</span>{signed(stock_change,"%")}</div></div>')
+    return '<div class="sector-grid">'+"".join(cards)+'</div><p class="muted source">섹터 등락률은 국내 섹터 ETF 기준 · 대표 종목은 투자 추천이 아닙니다.</p>'
+
+
 def korea_10y_naver():
     history=[]
     for page in range(1,7):
@@ -250,11 +269,12 @@ def main():
         except Exception: leaders.append((name,code,0.0))
     tone="강세" if kospi_change>.5 else "약세" if kospi_change<-.5 else "보합권"
     summary=f"코스피는 {kospi:,.2f}로 마감해 전 거래일 대비 {kospi_change:+.2f}%를 기록했습니다. 시장은 {tone} 흐름을 보였습니다."
-    investors,health,bond,news=flow_html(now),health_html(now),yield_html(),news_html(now)
+    investors,health,bond,news,sectors=flow_html(now),health_html(now),yield_html(),news_html(now),sector_html()
     kospi_chart=trend_chart(kospi_history,"KOSPI 최근 60거래일 추이","{:,.0f}")
     fx_chart=trend_chart(fx_history,"원·달러 환율 최근 60거래일 추이","{:,.0f}원")
     leader_html="".join(f'<li class="leader-row"><details class="stock-detail"><summary><span>{escape(n)}</span>{signed(p,"%")}</summary>{leader_history_html(code,now)}</details></li>' for n,code,p in leaders)
     stock_style='''.leader-row{display:block}.stock-detail{width:100%}.stock-detail summary{display:flex;justify-content:space-between;gap:14px;cursor:pointer;list-style:none}.stock-detail summary::-webkit-details-marker{display:none}.stock-detail summary span:first-child:before{content:"＋";color:var(--accent);margin-right:8px}.stock-detail[open] summary span:first-child:before{content:"－"}.stock-table-wrap{overflow-x:auto;margin-top:14px;padding-top:12px;border-top:1px solid var(--line)}.stock-table{width:100%;min-width:520px;border-collapse:collapse;font-size:12px}.stock-table th,.stock-table td{padding:9px 7px;text-align:right;white-space:nowrap;border-bottom:1px solid #1b3047}.stock-table th:first-child,.stock-table td:first-child{text-align:left}.stock-table th{color:var(--muted);font-weight:700}.stock-table .num{color:var(--text);font-weight:700}.stock-note{margin-top:9px;text-align:right}.stock-error{padding:16px 0 4px}'''
+    stock_style+='''.sector-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}.sector-item{border:1px solid var(--line);border-radius:14px;padding:14px;background:#0b1929}.sector-head,.sector-stock{display:flex;justify-content:space-between;align-items:center;gap:10px}.sector-head strong{font-size:15px}.sector-stock{margin-top:10px;padding-top:10px;border-top:1px solid #1b3047;color:var(--muted);font-size:12px}.sector-stock .up,.sector-stock .down,.sector-stock .flat{font-size:12px;white-space:nowrap}@media(max-width:760px){.sector-grid{grid-template-columns:1fr 1fr}}@media(max-width:480px){.sector-grid{grid-template-columns:1fr}}'''
     style=''':root{--line:#203249;--text:#eef5ff;--muted:#8ea2bb;--up:#ff5d70;--down:#56a8ff;--accent:#5ce1b9}*{box-sizing:border-box}body{margin:0;background:linear-gradient(180deg,#07111f,#0a1524 46%,#07111f);color:var(--text);font-family:Inter,"Noto Sans KR",system-ui,sans-serif}main{width:min(1080px,100%);margin:auto;padding:28px 18px 70px}header{display:flex;justify-content:space-between;gap:20px;align-items:flex-end;padding:18px 0 28px}.eyebrow{color:var(--accent);font-size:12px;font-weight:800;letter-spacing:.14em}h1{font-size:clamp(30px,5vw,52px);margin:8px 0;letter-spacing:-.05em}.muted{color:var(--muted);font-size:13px}.source{margin:12px 0 0}.badge{border:1px solid #2c4b61;border-radius:99px;padding:8px 12px;color:#bdeedc;font-size:12px}.grid{display:grid;grid-template-columns:repeat(12,1fr);gap:14px}.card{grid-column:span 4;background:linear-gradient(145deg,#102135ee,#0a1829f5);border:1px solid var(--line);border-radius:20px;padding:20px}.wide{grid-column:span 8}.half{grid-column:span 6}.full{grid-column:1/-1}.label{color:var(--muted);font-size:12px;font-weight:700}.value{font-size:30px;font-weight:800;margin:8px 0 4px}.up{color:var(--up)}.down{color:var(--down)}.flat{color:var(--accent)}.trend-chart{margin:12px 0 8px}.trend-chart svg{display:block;width:100%;height:auto;overflow:visible}.trend-chart text{fill:var(--muted);font-size:10px}.chart-axis{stroke:#29415b;stroke-width:1}.chart-line{fill:none;stroke:var(--accent);stroke-width:3;stroke-linecap:round;stroke-linejoin:round}.chart-dot{fill:var(--accent);stroke:#dffff6;stroke-width:2}.chart-empty{padding:24px 0}h2{font-size:18px;margin:0 0 16px}p{line-height:1.65}.summary{font-size:18px;margin:0}ul{list-style:none;margin:0;padding:0}li{display:flex;justify-content:space-between;gap:14px;padding:13px 0;border-top:1px solid var(--line)}li:first-child{border-top:0;padding-top:0}a{color:#dceaff;text-decoration:none}.news{align-items:flex-start}.news a{flex:1}.news small{color:var(--muted);white-space:nowrap}footer{color:#6f849e;font-size:12px;text-align:center;padding-top:28px}@media(max-width:760px){header{align-items:flex-start;flex-direction:column}.card,.wide,.half{grid-column:1/-1}.card{padding:17px;border-radius:17px}.news{display:block}.news small{display:block;margin-top:6px}}'''
     html=f'''<!doctype html><html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>KOSPI Closing Brief</title><style>{style}</style></head><body><main><header><div><div class="eyebrow">MARKET CLOSE · KOREA</div><h1>KOSPI Closing Brief</h1><div class="muted">오늘 시장의 핵심 숫자와 이유를 3분 안에</div></div><div><div class="badge">장 마감 리포트</div><div class="muted">{now:%Y.%m.%d %H:%M} KST</div></div></header><section class="grid"><article class="card"><div class="label">KOSPI</div><div class="value">{kospi:,.2f}</div>{signed(kospi_change,'%')}</article><article class="card"><div class="label">USD / KRW</div><div class="value">{fx:,.2f}</div>{signed(fx_change,'%')}</article><article class="card">{bond}</article><article class="card wide"><h2>오늘의 한 문장</h2><p class="summary">{escape(summary)}</p></article><article class="card"><h2>투자자별 수급</h2>{investors}</article><article class="card half"><h2>시가총액 주요 종목</h2><ul>{leader_html}</ul></article><article class="card half"><h2>시장폭 &amp; 기술지표</h2>{health}</article><article class="card full"><h2>주요 뉴스</h2><ul>{news}</ul></article><article class="card half"><h2>실적 &amp; 공시</h2><p class="muted">DART API 연결 후 표시합니다.</p></article><article class="card half"><h2>다음 거래일 관전 포인트</h2><p>미국 증시 · 반도체 · 환율 · 외국인 수급</p></article><article class="card full"><p class="muted">정보 제공 목적이며 투자 권유가 아닙니다. Yahoo Finance, 네이버 금융, KRX 및 Google News RSS 기반.</p></article></section><footer>KOSPI Closing Brief</footer></main></body></html>'''
     html=html.replace("</style>",stock_style+"</style>",1).replace(
@@ -264,6 +284,11 @@ def main():
     ).replace(
         f'<div class="value">{fx:,.2f}</div>{signed(fx_change,"%")}</article>',
         f'<div class="value">{fx:,.2f}</div>{signed(fx_change,"%")}{fx_chart}<div class="muted">최근 60거래일</div></article>',
+        1,
+    )
+    html=html.replace(
+        f'<article class="card full"><h2>주요 뉴스</h2><ul>{news}</ul></article><article class="card half"><h2>실적 &amp; 공시</h2><p class="muted">DART API 연결 후 표시합니다.</p></article>',
+        f'<article class="card full"><h2>섹터 현황</h2>{sectors}</article><article class="card half"><h2>주요 뉴스</h2><ul>{news}</ul></article>',
         1,
     )
     OUT.parent.mkdir(parents=True,exist_ok=True); OUT.write_text(html,encoding="utf-8"); print(summary)
