@@ -122,26 +122,42 @@ def health_html(now):
     return f'<ul>{rows}</ul>{source}'
 
 def korea_10y_naver():
-    p=TableRows(); p.feed(fetch("https://finance.naver.com/marketindex/interestDailyQuote.naver?marketindexCd=IRR_GOVT10Y&page=1", "euc-kr"))
-    for row in p.rows:
-        if len(row)>=2 and re.fullmatch(r"\d{4}\.\d{2}\.\d{2}", row[0]):
-            return {"date":row[0][5:],"value":float(row[1].replace(",","")),"change":float(row[2].replace(",","")) if len(row)>2 else 0,"source":"네이버 금융"}
-    raise RuntimeError("한국 국채 10년물 데이터 없음")
+    history=[]
+    for page in range(1,7):
+        p=TableRows(); p.feed(fetch("https://finance.naver.com/marketindex/interestDailyQuote.naver?marketindexCd=IRR_GOVT10Y"+f"&page={page}", "euc-kr"))
+        for row in p.rows:
+            if len(row)>=2 and re.fullmatch(r"\d{4}\.\d{2}\.\d{2}", row[0]):
+                history.append({"date":row[0],"value":float(row[1].replace(",",""))})
+    history=sorted({x["date"]:x for x in history}.values(),key=lambda x:x["date"])
+    if len(history)<2: raise RuntimeError("한국 국고채 10년물 시계열 없음")
+    return {"date":history[-1]["date"][5:],"value":history[-1]["value"],"change":history[-1]["value"]-history[-2]["value"],"history":history,"source":"네이버 금융"}
 def korea_10y_yahoo():
-    f=yf.download("KR10YT=RR", period="10d", progress=False, auto_adjust=False)
+    f=yf.download("KR10YT=RR", period="6mo", progress=False, auto_adjust=False)
     values=f["Close"].dropna().to_numpy().reshape(-1)
     if len(values)<2: raise RuntimeError("Yahoo 한국 국채 10년물 데이터 없음")
-    return {"date":datetime.now(KST).strftime("%m.%d"),"value":float(values[-1]),"change":float(values[-1]-values[-2]),"source":"Yahoo Finance"}
+    dates=[x.strftime("%Y.%m.%d") for x in f["Close"].dropna().index]
+    history=[{"date":date,"value":float(value)} for date,value in zip(dates,values)]
+    return {"date":dates[-1][5:],"value":float(values[-1]),"change":float(values[-1]-values[-2]),"history":history,"source":"Yahoo Finance"}
+def yield_chart(history):
+    points=history[-60:]
+    if len(points)<2: return '<div class="muted chart-empty">추이 데이터 없음</div>'
+    values=[x["value"] for x in points]; low=min(values); high=max(values); span=max(high-low,.05)
+    coords=[]
+    for i,value in enumerate(values):
+        x=8+i*464/(len(values)-1); y=112-(value-low)*88/span
+        coords.append(f"{x:.1f},{y:.1f}")
+    return f'''<div class="bond-chart"><svg viewBox="0 0 480 128" role="img" aria-label="한국 국고채 10년물 최근 60거래일 금리 추이"><line x1="8" y1="112" x2="472" y2="112" class="chart-axis"/><polyline points="{' '.join(coords)}" class="chart-line"/><circle cx="{coords[-1].split(',')[0]}" cy="{coords[-1].split(',')[1]}" r="4" class="chart-dot"/><text x="8" y="18">{high:.2f}%</text><text x="8" y="126">{points[0]['date'][5:]}</text><text x="472" y="126" text-anchor="end">{points[-1]['date'][5:]}</text></svg></div>'''
 def yield_html():
     stale=False
     d=None
-    for fn in (korea_10y_yahoo,korea_10y_naver):
+    for fn in (korea_10y_naver,korea_10y_yahoo):
         try: d=fn(); save(YIELD_CACHE,d); break
         except Exception as exc: print(f"한국 국채 10년물 조회 실패: {exc}")
     if d is None:
         try: d=load(YIELD_CACHE); stale=True
         except Exception: return '<div class="label">한국 국채 10년물</div><div class="value">–</div><div class="muted">조회 실패</div>'
-    return f'<div class="label">한국 국채 10년물</div><div class="value">{d["value"]:.3f}%</div>{signed(d.get("change",0),"%p")}<div class="muted">{d["date"]} · {d.get("source","저장값")}{" · 직전 정상값" if stale else ""}</div>'
+    chart=yield_chart(d.get("history",[]))
+    return f'<div class="label">한국 국고채 10년물</div><div class="value">{d["value"]:.3f}%</div>{signed(d.get("change",0),"%p")}{chart}<div class="muted">최근 60거래일 · {d["date"]} · {d.get("source","저장값")}{" · 직전 정상값" if stale else ""}</div>'
 
 def latest_news(now):
     entries=[]
@@ -179,7 +195,7 @@ def main():
     summary=f"코스피는 {kospi:,.2f}로 마감해 전 거래일 대비 {kospi_change:+.2f}%를 기록했습니다. 시장은 {tone} 흐름을 보였습니다."
     investors,health,bond,news=flow_html(now),health_html(now),yield_html(),news_html(now)
     leader_html="".join(f"<li><span>{escape(n)}</span>{signed(p,'%')}</li>" for n,p in leaders)
-    style=''':root{--line:#203249;--text:#eef5ff;--muted:#8ea2bb;--up:#ff5d70;--down:#56a8ff;--accent:#5ce1b9}*{box-sizing:border-box}body{margin:0;background:linear-gradient(180deg,#07111f,#0a1524 46%,#07111f);color:var(--text);font-family:Inter,"Noto Sans KR",system-ui,sans-serif}main{width:min(1080px,100%);margin:auto;padding:28px 18px 70px}header{display:flex;justify-content:space-between;gap:20px;align-items:flex-end;padding:18px 0 28px}.eyebrow{color:var(--accent);font-size:12px;font-weight:800;letter-spacing:.14em}h1{font-size:clamp(30px,5vw,52px);margin:8px 0;letter-spacing:-.05em}.muted{color:var(--muted);font-size:13px}.source{margin:12px 0 0}.badge{border:1px solid #2c4b61;border-radius:99px;padding:8px 12px;color:#bdeedc;font-size:12px}.grid{display:grid;grid-template-columns:repeat(12,1fr);gap:14px}.card{grid-column:span 4;background:linear-gradient(145deg,#102135ee,#0a1829f5);border:1px solid var(--line);border-radius:20px;padding:20px}.wide{grid-column:span 8}.half{grid-column:span 6}.full{grid-column:1/-1}.label{color:var(--muted);font-size:12px;font-weight:700}.value{font-size:30px;font-weight:800;margin:8px 0 4px}.up{color:var(--up)}.down{color:var(--down)}.flat{color:var(--accent)}h2{font-size:18px;margin:0 0 16px}p{line-height:1.65}.summary{font-size:18px;margin:0}ul{list-style:none;margin:0;padding:0}li{display:flex;justify-content:space-between;gap:14px;padding:13px 0;border-top:1px solid var(--line)}li:first-child{border-top:0;padding-top:0}a{color:#dceaff;text-decoration:none}.news{align-items:flex-start}.news a{flex:1}.news small{color:var(--muted);white-space:nowrap}footer{color:#6f849e;font-size:12px;text-align:center;padding-top:28px}@media(max-width:760px){header{align-items:flex-start;flex-direction:column}.card,.wide,.half{grid-column:1/-1}.card{padding:17px;border-radius:17px}.news{display:block}.news small{display:block;margin-top:6px}}'''
+    style=''':root{--line:#203249;--text:#eef5ff;--muted:#8ea2bb;--up:#ff5d70;--down:#56a8ff;--accent:#5ce1b9}*{box-sizing:border-box}body{margin:0;background:linear-gradient(180deg,#07111f,#0a1524 46%,#07111f);color:var(--text);font-family:Inter,"Noto Sans KR",system-ui,sans-serif}main{width:min(1080px,100%);margin:auto;padding:28px 18px 70px}header{display:flex;justify-content:space-between;gap:20px;align-items:flex-end;padding:18px 0 28px}.eyebrow{color:var(--accent);font-size:12px;font-weight:800;letter-spacing:.14em}h1{font-size:clamp(30px,5vw,52px);margin:8px 0;letter-spacing:-.05em}.muted{color:var(--muted);font-size:13px}.source{margin:12px 0 0}.badge{border:1px solid #2c4b61;border-radius:99px;padding:8px 12px;color:#bdeedc;font-size:12px}.grid{display:grid;grid-template-columns:repeat(12,1fr);gap:14px}.card{grid-column:span 4;background:linear-gradient(145deg,#102135ee,#0a1829f5);border:1px solid var(--line);border-radius:20px;padding:20px}.wide{grid-column:span 8}.half{grid-column:span 6}.full{grid-column:1/-1}.label{color:var(--muted);font-size:12px;font-weight:700}.value{font-size:30px;font-weight:800;margin:8px 0 4px}.up{color:var(--up)}.down{color:var(--down)}.flat{color:var(--accent)}.bond-chart{margin:12px 0 8px}.bond-chart svg{display:block;width:100%;height:auto;overflow:visible}.bond-chart text{fill:var(--muted);font-size:10px}.chart-axis{stroke:#29415b;stroke-width:1}.chart-line{fill:none;stroke:var(--accent);stroke-width:3;stroke-linecap:round;stroke-linejoin:round}.chart-dot{fill:var(--accent);stroke:#dffff6;stroke-width:2}.chart-empty{padding:24px 0}h2{font-size:18px;margin:0 0 16px}p{line-height:1.65}.summary{font-size:18px;margin:0}ul{list-style:none;margin:0;padding:0}li{display:flex;justify-content:space-between;gap:14px;padding:13px 0;border-top:1px solid var(--line)}li:first-child{border-top:0;padding-top:0}a{color:#dceaff;text-decoration:none}.news{align-items:flex-start}.news a{flex:1}.news small{color:var(--muted);white-space:nowrap}footer{color:#6f849e;font-size:12px;text-align:center;padding-top:28px}@media(max-width:760px){header{align-items:flex-start;flex-direction:column}.card,.wide,.half{grid-column:1/-1}.card{padding:17px;border-radius:17px}.news{display:block}.news small{display:block;margin-top:6px}}'''
     html=f'''<!doctype html><html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>KOSPI Closing Brief</title><style>{style}</style></head><body><main><header><div><div class="eyebrow">MARKET CLOSE · KOREA</div><h1>KOSPI Closing Brief</h1><div class="muted">오늘 시장의 핵심 숫자와 이유를 3분 안에</div></div><div><div class="badge">장 마감 리포트</div><div class="muted">{now:%Y.%m.%d %H:%M} KST</div></div></header><section class="grid"><article class="card"><div class="label">KOSPI</div><div class="value">{kospi:,.2f}</div>{signed(kospi_change,'%')}</article><article class="card"><div class="label">USD / KRW</div><div class="value">{fx:,.2f}</div>{signed(fx_change,'%')}</article><article class="card">{bond}</article><article class="card wide"><h2>오늘의 한 문장</h2><p class="summary">{escape(summary)}</p></article><article class="card"><h2>투자자별 수급</h2>{investors}</article><article class="card half"><h2>시가총액 주요 종목</h2><ul>{leader_html}</ul></article><article class="card half"><h2>시장폭 &amp; 기술지표</h2>{health}</article><article class="card full"><h2>주요 뉴스</h2><ul>{news}</ul></article><article class="card half"><h2>실적 &amp; 공시</h2><p class="muted">DART API 연결 후 표시합니다.</p></article><article class="card half"><h2>다음 거래일 관전 포인트</h2><p>미국 증시 · 반도체 · 환율 · 외국인 수급</p></article><article class="card full"><p class="muted">정보 제공 목적이며 투자 권유가 아닙니다. Yahoo Finance, 네이버 금융, KRX 및 Google News RSS 기반.</p></article></section><footer>KOSPI Closing Brief</footer></main></body></html>'''
     OUT.parent.mkdir(parents=True,exist_ok=True); OUT.write_text(html,encoding="utf-8"); print(summary)
 
