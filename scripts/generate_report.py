@@ -14,7 +14,7 @@ KST = ZoneInfo("Asia/Seoul")
 OUT, CACHE = Path("site/index.html"), Path("work/cache")
 FLOW_CACHE, BREADTH_CACHE = CACHE / "investor-flow.json", CACHE / "market-breadth.json"
 YIELD_CACHE, NEWS_CACHE = CACHE / "korea-10y-yield.json", CACHE / "news.json"
-LEADERS = {"삼성전자":"005930.KS","SK하이닉스":"000660.KS","현대차":"005380.KS","삼성바이오로직스":"207940.KS","LG에너지솔루션":"373220.KS"}
+LEADERS = {"삼성전자":("005930","005930.KS"),"SK하이닉스":("000660","000660.KS"),"현대차":("005380","005380.KS"),"삼성바이오로직스":("207940","207940.KS"),"LG에너지솔루션":("373220","373220.KS")}
 
 class TableRows(HTMLParser):
     def __init__(self): super().__init__(); self.rows=[]; self.row=None; self.cell=None
@@ -49,7 +49,7 @@ def quote_history(ticker):
     return float(values[-1]), (float(values[-1])/float(values[-2])-1)*100, history
 def signed(value, suffix="", label=None):
     css="up" if value>0 else "down" if value<0 else "flat"; arrow="▲" if value>0 else "▼" if value<0 else "–"
-    text=f"{abs(value):,.0f}" if suffix=="억원" else f"{abs(value):,.2f}"
+    text=f"{abs(value):,.0f}" if suffix in ("억원","주") else f"{abs(value):,.2f}"
     return f'<span class="{css}">{(label+" ") if label else ""}{arrow} {text}{suffix}</span>'
 
 def investor_naver(now):
@@ -126,6 +126,37 @@ def health_html(now):
         rows+=f'<li><span>20일선</span><strong>{t["ma20"]:,.2f} · {"상회" if t["current"]>=t["ma20"] else "하회"}</strong></li><li><span>60일선</span><strong>{t["ma60"]:,.2f} · {"상회" if t["current"]>=t["ma60"] else "하회"}</strong></li><li><span>RSI(14)</span><strong>{t["rsi"]:.1f}</strong></li>'
     source=f'<p class="muted source">{b["date"]} · {b.get("source","저장값")}{" · 실시간 조회 실패로 직전 정상값" if stale else ""}</p>' if b else '<p class="muted source">시장폭 조회 실패 · 기술지표는 정상 표시</p>'
     return f'<ul>{rows}</ul>{source}'
+
+def leader_history_naver(code):
+    p=TableRows(); p.feed(fetch(f"https://finance.naver.com/item/frgn.naver?code={code}&page=1","euc-kr")); data=[]
+    for row in p.rows:
+        if len(row)>=7 and re.fullmatch(r"\d{4}\.\d{2}\.\d{2}",row[0]):
+            close=int(row[1].replace(",","")); institution=int(row[5].replace(",","").replace("+","")); foreign=int(row[6].replace(",","").replace("+","")); personal=-(institution+foreign)
+            data.append((row[0][5:],close,personal,foreign,institution))
+    if len(data)<5: raise RuntimeError("네이버증권 최근 5거래일 데이터 없음")
+    return data[:5],"네이버증권 · 개인은 기관·외국인 순매매량의 반대값으로 계산"
+
+
+def leader_history_krx(code, now):
+    start=(now.date()-timedelta(days=16)).strftime("%Y%m%d"); end=now.strftime("%Y%m%d")
+    prices=stock.get_market_ohlcv_by_date(start,end,code); flows=stock.get_market_trading_volume_by_date(start,end,code)
+    if prices is None or prices.empty or flows is None or flows.empty: raise RuntimeError("KRX 최근 데이터 없음")
+    merged=prices[["종가"]].join(flows,how="left").tail(5); data=[]
+    for day,row in reversed(list(merged.iterrows())):
+        personal=round(float(row.get("개인",0))); foreign=round(float(row.get("외국인합계",row.get("외국인",0)))); institution=round(float(row.get("기관합계",row.get("기관",0))))
+        data.append((day.strftime("%m.%d"),round(float(row["종가"])),personal,foreign,institution))
+    return data,"KRX"
+
+
+def leader_history_html(code, now):
+    data=None; source=""
+    for fn in (lambda:leader_history_naver(code),lambda:leader_history_krx(code,now)):
+        try: data,source=fn(); break
+        except Exception as exc: print(f"종목 5일 데이터 조회 실패({code}): {exc}")
+    if not data: return '<div class="muted stock-error">최근 5거래일 상세 데이터를 불러오지 못했습니다.</div>'
+    rows="".join(f'<tr><td>{day}</td><td class="num">{close:,.0f}원</td><td>{signed(personal,"주")}</td><td>{signed(foreign,"주")}</td><td>{signed(institution,"주")}</td></tr>' for day,close,personal,foreign,institution in data)
+    return '<div class="stock-table-wrap"><table class="stock-table"><thead><tr><th>날짜</th><th>종가</th><th>개인</th><th>외국인</th><th>기관</th></tr></thead><tbody>'+rows+f'</tbody></table><div class="muted stock-note">순매수량 · 단위: 주 · {source}</div></div>'
+
 
 def korea_10y_naver():
     history=[]
@@ -214,18 +245,19 @@ def news_html(now):
 def main():
     now=datetime.now(KST); kospi,kospi_change,kospi_history=quote_history("^KS11"); fx,fx_change,fx_history=quote_history("KRW=X")
     leaders=[]
-    for name,ticker in LEADERS.items():
-        try: leaders.append((name,quote(ticker)[1]))
-        except Exception: leaders.append((name,0.0))
+    for name,(code,ticker) in LEADERS.items():
+        try: leaders.append((name,code,quote(ticker)[1]))
+        except Exception: leaders.append((name,code,0.0))
     tone="강세" if kospi_change>.5 else "약세" if kospi_change<-.5 else "보합권"
     summary=f"코스피는 {kospi:,.2f}로 마감해 전 거래일 대비 {kospi_change:+.2f}%를 기록했습니다. 시장은 {tone} 흐름을 보였습니다."
     investors,health,bond,news=flow_html(now),health_html(now),yield_html(),news_html(now)
     kospi_chart=trend_chart(kospi_history,"KOSPI 최근 60거래일 추이","{:,.0f}")
     fx_chart=trend_chart(fx_history,"원·달러 환율 최근 60거래일 추이","{:,.0f}원")
-    leader_html="".join(f"<li><span>{escape(n)}</span>{signed(p,'%')}</li>" for n,p in leaders)
+    leader_html="".join(f'<li class="leader-row"><details class="stock-detail"><summary><span>{escape(n)}</span>{signed(p,"%")}</summary>{leader_history_html(code,now)}</details></li>' for n,code,p in leaders)
+    stock_style='''.leader-row{display:block}.stock-detail{width:100%}.stock-detail summary{display:flex;justify-content:space-between;gap:14px;cursor:pointer;list-style:none}.stock-detail summary::-webkit-details-marker{display:none}.stock-detail summary span:first-child:before{content:"＋";color:var(--accent);margin-right:8px}.stock-detail[open] summary span:first-child:before{content:"－"}.stock-table-wrap{overflow-x:auto;margin-top:14px;padding-top:12px;border-top:1px solid var(--line)}.stock-table{width:100%;min-width:520px;border-collapse:collapse;font-size:12px}.stock-table th,.stock-table td{padding:9px 7px;text-align:right;white-space:nowrap;border-bottom:1px solid #1b3047}.stock-table th:first-child,.stock-table td:first-child{text-align:left}.stock-table th{color:var(--muted);font-weight:700}.stock-table .num{color:var(--text);font-weight:700}.stock-note{margin-top:9px;text-align:right}.stock-error{padding:16px 0 4px}'''
     style=''':root{--line:#203249;--text:#eef5ff;--muted:#8ea2bb;--up:#ff5d70;--down:#56a8ff;--accent:#5ce1b9}*{box-sizing:border-box}body{margin:0;background:linear-gradient(180deg,#07111f,#0a1524 46%,#07111f);color:var(--text);font-family:Inter,"Noto Sans KR",system-ui,sans-serif}main{width:min(1080px,100%);margin:auto;padding:28px 18px 70px}header{display:flex;justify-content:space-between;gap:20px;align-items:flex-end;padding:18px 0 28px}.eyebrow{color:var(--accent);font-size:12px;font-weight:800;letter-spacing:.14em}h1{font-size:clamp(30px,5vw,52px);margin:8px 0;letter-spacing:-.05em}.muted{color:var(--muted);font-size:13px}.source{margin:12px 0 0}.badge{border:1px solid #2c4b61;border-radius:99px;padding:8px 12px;color:#bdeedc;font-size:12px}.grid{display:grid;grid-template-columns:repeat(12,1fr);gap:14px}.card{grid-column:span 4;background:linear-gradient(145deg,#102135ee,#0a1829f5);border:1px solid var(--line);border-radius:20px;padding:20px}.wide{grid-column:span 8}.half{grid-column:span 6}.full{grid-column:1/-1}.label{color:var(--muted);font-size:12px;font-weight:700}.value{font-size:30px;font-weight:800;margin:8px 0 4px}.up{color:var(--up)}.down{color:var(--down)}.flat{color:var(--accent)}.trend-chart{margin:12px 0 8px}.trend-chart svg{display:block;width:100%;height:auto;overflow:visible}.trend-chart text{fill:var(--muted);font-size:10px}.chart-axis{stroke:#29415b;stroke-width:1}.chart-line{fill:none;stroke:var(--accent);stroke-width:3;stroke-linecap:round;stroke-linejoin:round}.chart-dot{fill:var(--accent);stroke:#dffff6;stroke-width:2}.chart-empty{padding:24px 0}h2{font-size:18px;margin:0 0 16px}p{line-height:1.65}.summary{font-size:18px;margin:0}ul{list-style:none;margin:0;padding:0}li{display:flex;justify-content:space-between;gap:14px;padding:13px 0;border-top:1px solid var(--line)}li:first-child{border-top:0;padding-top:0}a{color:#dceaff;text-decoration:none}.news{align-items:flex-start}.news a{flex:1}.news small{color:var(--muted);white-space:nowrap}footer{color:#6f849e;font-size:12px;text-align:center;padding-top:28px}@media(max-width:760px){header{align-items:flex-start;flex-direction:column}.card,.wide,.half{grid-column:1/-1}.card{padding:17px;border-radius:17px}.news{display:block}.news small{display:block;margin-top:6px}}'''
     html=f'''<!doctype html><html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>KOSPI Closing Brief</title><style>{style}</style></head><body><main><header><div><div class="eyebrow">MARKET CLOSE · KOREA</div><h1>KOSPI Closing Brief</h1><div class="muted">오늘 시장의 핵심 숫자와 이유를 3분 안에</div></div><div><div class="badge">장 마감 리포트</div><div class="muted">{now:%Y.%m.%d %H:%M} KST</div></div></header><section class="grid"><article class="card"><div class="label">KOSPI</div><div class="value">{kospi:,.2f}</div>{signed(kospi_change,'%')}</article><article class="card"><div class="label">USD / KRW</div><div class="value">{fx:,.2f}</div>{signed(fx_change,'%')}</article><article class="card">{bond}</article><article class="card wide"><h2>오늘의 한 문장</h2><p class="summary">{escape(summary)}</p></article><article class="card"><h2>투자자별 수급</h2>{investors}</article><article class="card half"><h2>시가총액 주요 종목</h2><ul>{leader_html}</ul></article><article class="card half"><h2>시장폭 &amp; 기술지표</h2>{health}</article><article class="card full"><h2>주요 뉴스</h2><ul>{news}</ul></article><article class="card half"><h2>실적 &amp; 공시</h2><p class="muted">DART API 연결 후 표시합니다.</p></article><article class="card half"><h2>다음 거래일 관전 포인트</h2><p>미국 증시 · 반도체 · 환율 · 외국인 수급</p></article><article class="card full"><p class="muted">정보 제공 목적이며 투자 권유가 아닙니다. Yahoo Finance, 네이버 금융, KRX 및 Google News RSS 기반.</p></article></section><footer>KOSPI Closing Brief</footer></main></body></html>'''
-    html=html.replace(
+    html=html.replace("</style>",stock_style+"</style>",1).replace(
         f'<div class="value">{kospi:,.2f}</div>{signed(kospi_change,"%")}</article>',
         f'<div class="value">{kospi:,.2f}</div>{signed(kospi_change,"%")}{kospi_chart}<div class="muted">최근 60거래일</div></article>',
         1,
