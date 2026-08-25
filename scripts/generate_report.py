@@ -1,15 +1,18 @@
-from datetime import datetime
+from datetime import datetime, timedelta
 from html import escape
 from html.parser import HTMLParser
 from pathlib import Path
 from zoneinfo import ZoneInfo
 import re
+import json
 import urllib.request
 import feedparser
 import yfinance as yf
+from pykrx import stock
 
 KST = ZoneInfo("Asia/Seoul")
 OUT = Path("site/index.html")
+CACHE = Path("work/cache/investor-flow.json")
 LEADERS = {"삼성전자":"005930.KS","SK하이닉스":"000660.KS","현대차":"005380.KS","삼성바이오로직스":"207940.KS","LG에너지솔루션":"373220.KS"}
 
 
@@ -40,7 +43,7 @@ class TableRows(HTMLParser):
             self.row = None
 
 
-def investor_flows(now):
+def investor_flows_naver(now):
     url = (
         "https://finance.naver.com/sise/investorDealTrendDay.naver"
         f"?bizdate={now:%Y%m%d}&sosok=0&page=1"
@@ -63,17 +66,79 @@ def investor_flows(now):
     raise RuntimeError("네이버증권 코스피 투자자별 수급 데이터가 없습니다.")
 
 
+def investor_flows_krx(now):
+    """Fetch KOSPI investor net trading value from KRX via pykrx.
+
+    KRX publishes values in won. Search backwards because holidays and delayed
+    end-of-day publication can make today's row temporarily unavailable.
+    """
+    last_error = None
+    for offset in range(8):
+        day = now.date() - timedelta(days=offset)
+        ymd = day.strftime("%Y%m%d")
+        try:
+            frame = stock.get_market_trading_value_by_investor(ymd, ymd, "KOSPI")
+            if frame is None or frame.empty or "순매수" not in frame.columns:
+                continue
+            flows = {}
+            for name in ("개인", "외국인", "기관합계"):
+                if name not in frame.index:
+                    raise RuntimeError(f"KRX 응답에 {name} 항목이 없습니다.")
+                display = "기관" if name == "기관합계" else name
+                flows[display] = round(float(frame.loc[name, "순매수"]) / 100_000_000)
+            return day.strftime("%m.%d"), flows
+        except Exception as exc:
+            last_error = exc
+    raise RuntimeError(f"KRX 코스피 투자자별 수급 데이터가 없습니다: {last_error}")
+
+
+def save_flow_cache(trade_date, flows, source):
+    CACHE.parent.mkdir(parents=True, exist_ok=True)
+    CACHE.write_text(
+        json.dumps(
+            {"trade_date": trade_date, "flows": flows, "source": source},
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+
+def load_flow_cache():
+    data = json.loads(CACHE.read_text(encoding="utf-8"))
+    flows = {name: int(value) for name, value in data["flows"].items()}
+    return data["trade_date"], flows, data.get("source", "이전 정상 조회")
+
+
+def investor_flows(now):
+    errors = []
+    for source, fetcher in (("네이버증권", investor_flows_naver), ("KRX", investor_flows_krx)):
+        try:
+            trade_date, flows = fetcher(now)
+            save_flow_cache(trade_date, flows, source)
+            return trade_date, flows, source, False
+        except Exception as exc:
+            errors.append(f"{source}: {exc}")
+            print(f"{source} 수급 조회 실패: {exc}")
+    try:
+        trade_date, flows, source = load_flow_cache()
+        return trade_date, flows, f"최근 저장값({source})", True
+    except Exception as exc:
+        errors.append(f"캐시: {exc}")
+    raise RuntimeError(" / ".join(errors))
+
+
 def flow_html(now):
     try:
-        trade_date, flows = investor_flows(now)
+        trade_date, flows, source, stale = investor_flows(now)
         items = []
         for name, value in flows.items():
             direction = "순매수" if value > 0 else "순매도" if value < 0 else "보합"
             items.append(f"<li><span>{name}</span>{signed(value, '억원', label=direction)}</li>")
-        return f'<ul>{"".join(items)}</ul><p class="muted source">{trade_date} · 네이버증권 · 단위: 억원</p>'
+        stale_text = " · 실시간 조회 실패로 직전 정상값" if stale else ""
+        return f'<ul>{"".join(items)}</ul><p class="muted source">{trade_date} · {source}{stale_text} · 단위: 억원</p>'
     except Exception as exc:
         print(f"투자자별 수급 조회 실패: {exc}")
-        return '<p class="muted">네이버증권 수급 데이터를 확인하지 못했습니다.</p>'
+        return '<p class="muted">네이버증권·KRX·직전 정상값을 모두 확인하지 못했습니다.</p>'
 
 def quote(ticker):
     frame = yf.download(ticker, period="10d", progress=False, auto_adjust=False)
