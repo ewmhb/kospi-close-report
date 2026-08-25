@@ -46,13 +46,13 @@ class TableRows(HTMLParser):
 def investor_flows_naver(now):
     url = (
         "https://finance.naver.com/sise/investorDealTrendDay.naver"
-        f"?bizdate={now:%Y%m%d}&sosok=0&page=1"
+        f"?bizdate={now:%Y%m%d}&sosok=01&page=1"
     )
     request = urllib.request.Request(
         url,
         headers={
             "User-Agent": "Mozilla/5.0",
-            "Referer": "https://finance.naver.com/sise/sise_trans_style.naver?sosok=0",
+            "Referer": "https://finance.naver.com/sise/sise_trans_style.naver?sosok=01",
         },
     )
     with urllib.request.urlopen(request, timeout=20) as response:
@@ -60,7 +60,7 @@ def investor_flows_naver(now):
     parser = TableRows()
     parser.feed(raw.decode("euc-kr", errors="replace"))
     for row in parser.rows:
-        if len(row) >= 4 and re.fullmatch(r"\d{2}\.\d{2}", row[0]):
+        if len(row) >= 4 and re.fullmatch(r"(?:\d{2}\.)?\d{2}\.\d{2}", row[0]):
             values = [int(value.replace(",", "").replace("+", "")) for value in row[1:4]]
             return row[0], dict(zip(("개인", "외국인", "기관"), values))
     raise RuntimeError("네이버증권 코스피 투자자별 수급 데이터가 없습니다.")
