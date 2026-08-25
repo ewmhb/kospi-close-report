@@ -42,19 +42,54 @@ jobs:
             report-data-
             investor-flow-
       - run: pip install -r requirements.txt
+      - name: Check KOSPI trading day
+        id: trading_day
+        shell: bash
+        run: |
+          python - <<'PY'
+          import os
+          from datetime import datetime
+          from zoneinfo import ZoneInfo
+
+          from pykrx import stock
+
+          # Manual runs are tests and may run on weekends or exchange holidays.
+          if os.environ.get("GITHUB_EVENT_NAME") != "schedule":
+              is_open = True
+              reason = "manual test run"
+          else:
+              today = datetime.now(ZoneInfo("Asia/Seoul")).strftime("%Y%m%d")
+              quotes = stock.get_market_ohlcv_by_ticker(today, market="KOSPI")
+              is_open = not quotes.empty
+              reason = f"KOSPI trading data for {today}"
+
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+              output.write(f"is_open={str(is_open).lower()}\n")
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as summary:
+              status = "open" if is_open else "closed"
+              summary.write(f"## KOSPI market: {status}\n\n{reason}\n")
+          print(f"Trading-day check: {is_open} ({reason})")
+          PY
       - id: generate
+        if: steps.trading_day.outputs.is_open == 'true'
+        env:
+          ECOS_API_KEY: ${{ secrets.ECOS_API_KEY }}
         run: |
           set -o pipefail
           summary=$(python scripts/generate_report.py | tail -n 1)
           echo "summary=$summary" >> "$GITHUB_OUTPUT"
       - uses: actions/configure-pages@v5
+        if: steps.trading_day.outputs.is_open == 'true'
       - uses: actions/upload-pages-artifact@v3
+        if: steps.trading_day.outputs.is_open == 'true'
         with:
           path: site
       - name: Deploy GitHub Pages
+        if: steps.trading_day.outputs.is_open == 'true'
         id: deployment
         uses: actions/deploy-pages@v4
       - name: Send KakaoTalk notification
+        if: steps.trading_day.outputs.is_open == 'true'
         env:
           KAKAO_REST_API_KEY: ${{ secrets.KAKAO_REST_API_KEY }}
           KAKAO_CLIENT_SECRET: ${{ secrets.KAKAO_CLIENT_SECRET }}
