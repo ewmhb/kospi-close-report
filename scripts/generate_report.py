@@ -16,12 +16,12 @@ FLOW_CACHE, BREADTH_CACHE = CACHE / "investor-flow.json", CACHE / "market-breadt
 YIELD_CACHE, NEWS_CACHE = CACHE / "korea-10y-yield.json", CACHE / "news.json"
 LEADERS = {"삼성전자":("005930","005930.KS"),"SK하이닉스":("000660","000660.KS"),"현대차":("005380","005380.KS"),"삼성바이오로직스":("207940","207940.KS"),"LG에너지솔루션":("373220","373220.KS")}
 SECTORS = {
-    "반도체":("091230.KS","SK하이닉스","000660.KS"),
-    "건설":("117700.KS","현대건설","000720.KS"),
-    "바이오·헬스케어":("143860.KS","삼성바이오로직스","207940.KS"),
-    "자동차":("091180.KS","현대차","005380.KS"),
-    "2차전지":("305720.KS","LG에너지솔루션","373220.KS"),
-    "금융":("091170.KS","KB금융","105560.KS"),
+    "반도체":("091230.KS",[("삼성전자","005930.KS"),("SK하이닉스","000660.KS"),("DB하이텍","000990.KS")]),
+    "건설":("117700.KS",[("현대건설","000720.KS"),("GS건설","006360.KS"),("대우건설","047040.KS")]),
+    "바이오·헬스케어":("143860.KS",[("삼성바이오로직스","207940.KS"),("셀트리온","068270.KS"),("SK바이오팜","326030.KS")]),
+    "자동차":("091180.KS",[("현대차","005380.KS"),("기아","000270.KS"),("현대모비스","012330.KS")]),
+    "2차전지":("305720.KS",[("LG에너지솔루션","373220.KS"),("삼성SDI","006400.KS"),("포스코퓨처엠","003670.KS")]),
+    "금융":("091170.KS",[("KB금융","105560.KS"),("신한지주","055550.KS"),("하나금융지주","086790.KS")]),
 }
 
 class TableRows(HTMLParser):
@@ -167,14 +167,22 @@ def leader_history_html(code, now):
 
 
 def sector_html():
+    all_tickers=[]
+    for sector_ticker,candidates in SECTORS.values(): all_tickers.extend([sector_ticker]+[ticker for _,ticker in candidates])
+    frame=yf.download(sorted(set(all_tickers)),period="10d",progress=False,auto_adjust=False,group_by="ticker",threads=True)
+    changes={}
+    for ticker in set(all_tickers):
+        try:
+            values=frame[ticker]["Close"].dropna().to_numpy().reshape(-1)
+            if len(values)>=2: changes[ticker]=(float(values[-1])/float(values[-2])-1)*100
+        except Exception as exc: print(f"섹터 구성 종목 조회 실패({ticker}): {exc}")
     cards=[]
-    for sector,(sector_ticker,stock_name,stock_ticker) in SECTORS.items():
-        try: sector_change=quote(sector_ticker)[1]
-        except Exception as exc: print(f"섹터 조회 실패({sector}): {exc}"); sector_change=0.0
-        try: stock_change=quote(stock_ticker)[1]
-        except Exception as exc: print(f"대표 종목 조회 실패({stock_name}): {exc}"); stock_change=0.0
-        cards.append(f'<div class="sector-item"><div class="sector-head"><strong>{escape(sector)}</strong>{signed(sector_change,"%")}</div><div class="sector-stock"><span>대표 종목 · {escape(stock_name)}</span>{signed(stock_change,"%")}</div></div>')
-    return '<div class="sector-grid">'+"".join(cards)+'</div><p class="muted source">섹터 등락률은 국내 섹터 ETF 기준 · 대표 종목은 투자 추천이 아닙니다.</p>'
+    for sector,(sector_ticker,candidates) in SECTORS.items():
+        sector_change=changes.get(sector_ticker,0.0)
+        available=[(name,changes[ticker]) for name,ticker in candidates if ticker in changes]
+        stock_name,stock_change=max(available,key=lambda x:abs(x[1])) if available else ("조회 실패",0.0)
+        cards.append(f'<div class="sector-item"><div class="sector-head"><strong>{escape(sector)}</strong>{signed(sector_change,"%")}</div><div class="sector-stock"><span>오늘의 주요 종목 · {escape(stock_name)}</span>{signed(stock_change,"%")}</div></div>')
+    return '<div class="sector-grid">'+"".join(cards)+'</div><p class="muted source">섹터 등락률은 국내 섹터 ETF 기준 · 주요 종목은 후보군 중 당일 절대 등락률이 가장 큰 종목이며 투자 추천이 아닙니다.</p>'
 
 
 def korea_10y_naver():
