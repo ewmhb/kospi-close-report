@@ -4,7 +4,7 @@ from html import escape, unescape
 from html.parser import HTMLParser
 from pathlib import Path
 from zoneinfo import ZoneInfo
-import json, re, time, urllib.parse, urllib.request
+import json, os, re, time, urllib.parse, urllib.request
 
 import feedparser
 import yfinance as yf
@@ -131,6 +131,26 @@ def korea_10y_naver():
     history=sorted({x["date"]:x for x in history}.values(),key=lambda x:x["date"])
     if len(history)<2: raise RuntimeError("한국 국고채 10년물 시계열 없음")
     return {"date":history[-1]["date"][5:],"value":history[-1]["value"],"change":history[-1]["value"]-history[-2]["value"],"history":history,"source":"네이버 금융"}
+def korea_10y_ecos():
+    api_key=os.environ.get("ECOS_API_KEY")
+    if not api_key: raise RuntimeError("ECOS_API_KEY 미설정")
+    end=datetime.now(KST).date(); start=end-timedelta(days=150)
+    url=(f"https://ecos.bok.or.kr/api/StatisticSearch/{api_key}/json/kr/1/200/817Y002/D/"
+         f"{start:%Y%m%d}/{end:%Y%m%d}/010210000")
+    payload=json.loads(fetch(url)); rows=payload.get("StatisticSearch",{}).get("row",[])
+    history=[{"date":f'{x["TIME"][:4]}.{x["TIME"][4:6]}.{x["TIME"][6:8]}',"value":float(x["DATA_VALUE"])} for x in rows]
+    history=sorted(history,key=lambda x:x["date"])
+    if len(history)<2: raise RuntimeError("한국은행 ECOS 국고채 10년물 시계열 없음")
+    return {"date":history[-1]["date"][5:],"value":history[-1]["value"],"change":history[-1]["value"]-history[-2]["value"],"history":history,"source":"한국은행 ECOS"}
+def korea_10y_tooly():
+    p=TableRows(); p.feed(fetch("https://tooly.deluxo.co.kr/data/rates/treasury-10y"))
+    history=[]
+    for row in p.rows:
+        if len(row)>=2 and re.fullmatch(r"\d{4}-\d{2}",row[0]):
+            history.append({"date":row[0],"value":float(row[1].replace("%",""))})
+    history=sorted({x["date"]:x for x in history}.values(),key=lambda x:x["date"])
+    if len(history)<2: raise RuntimeError("ECOS 월평균 국고채 10년물 시계열 없음")
+    return {"date":history[-1]["date"],"value":history[-1]["value"],"change":history[-1]["value"]-history[-2]["value"],"history":history,"source":"한국은행 ECOS 월평균 · Tooly"}
 def korea_10y_yahoo():
     f=yf.download("KR10YT=RR", period="6mo", progress=False, auto_adjust=False)
     values=f["Close"].dropna().to_numpy().reshape(-1)
@@ -150,7 +170,7 @@ def yield_chart(history):
 def yield_html():
     stale=False
     d=None
-    for fn in (korea_10y_naver,korea_10y_yahoo):
+    for fn in (korea_10y_ecos,korea_10y_tooly,korea_10y_naver,korea_10y_yahoo):
         try: d=fn(); save(YIELD_CACHE,d); break
         except Exception as exc: print(f"한국 국채 10년물 조회 실패: {exc}")
     if d is None:
