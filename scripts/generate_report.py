@@ -80,7 +80,7 @@ def breadth_naver(now):
     text=re.sub(r"\s+", " ", unescape(re.sub(r"<[^>]+>", " ", raw)))
     values={}
     for key in ("상승","보합","하락"):
-        match=re.search(key+r"\s*(\d+)", text)
+        match=re.search(key+r"종목수\s*(\d+)", text)
         if not match: raise RuntimeError(f"네이버 시장폭 {key} 데이터 없음")
         values[key]=int(match.group(1))
     total=sum(values.values())
@@ -127,11 +127,18 @@ def korea_10y_naver():
         if len(row)>=2 and re.fullmatch(r"\d{4}\.\d{2}\.\d{2}", row[0]):
             return {"date":row[0][5:],"value":float(row[1].replace(",","")),"change":float(row[2].replace(",","")) if len(row)>2 else 0,"source":"네이버 금융"}
     raise RuntimeError("한국 국채 10년물 데이터 없음")
+def korea_10y_yahoo():
+    f=yf.download("KR10YT=RR", period="10d", progress=False, auto_adjust=False)
+    values=f["Close"].dropna().to_numpy().reshape(-1)
+    if len(values)<2: raise RuntimeError("Yahoo 한국 국채 10년물 데이터 없음")
+    return {"date":datetime.now(KST).strftime("%m.%d"),"value":float(values[-1]),"change":float(values[-1]-values[-2]),"source":"Yahoo Finance"}
 def yield_html():
     stale=False
-    try: d=korea_10y_naver(); save(YIELD_CACHE,d)
-    except Exception as exc:
-        print(f"한국 국채 10년물 조회 실패: {exc}")
+    d=None
+    for fn in (korea_10y_yahoo,korea_10y_naver):
+        try: d=fn(); save(YIELD_CACHE,d); break
+        except Exception as exc: print(f"한국 국채 10년물 조회 실패: {exc}")
+    if d is None:
         try: d=load(YIELD_CACHE); stale=True
         except Exception: return '<div class="label">한국 국채 10년물</div><div class="value">–</div><div class="muted">조회 실패</div>'
     return f'<div class="label">한국 국채 10년물</div><div class="value">{d["value"]:.3f}%</div>{signed(d.get("change",0),"%p")}<div class="muted">{d["date"]} · {d.get("source","저장값")}{" · 직전 정상값" if stale else ""}</div>'
