@@ -59,8 +59,18 @@ jobs:
               reason = "manual test run"
           else:
               today = datetime.now(ZoneInfo("Asia/Seoul")).strftime("%Y%m%d")
-              quotes = stock.get_market_ohlcv_by_ticker(today, market="KOSPI")
-              is_open = not quotes.empty
+              # Use one liquid ticker's daily series. The all-ticker endpoint
+              # can return an unexpected schema and raise inside pykrx.
+              quotes = stock.get_market_ohlcv_by_date(
+                  today,
+                  today,
+                  "005930",
+                  adjusted=False,
+              )
+              is_open = (
+                  not quotes.empty
+                  and quotes.index.strftime("%Y%m%d").eq(today).any()
+              )
               reason = f"KOSPI trading data for {today}"
 
           with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
