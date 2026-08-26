@@ -69,7 +69,7 @@ jobs:
               )
               is_open = (
                   not quotes.empty
-                  and quotes.index.strftime("%Y%m%d").eq(today).any()
+                  and (quotes.index.strftime("%Y%m%d") == today).any()
               )
               reason = f"KOSPI trading data for {today}"
 
