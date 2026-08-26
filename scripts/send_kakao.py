@@ -41,11 +41,11 @@ def main():
         print("::warning::카카오 리프레시 토큰이 갱신되었습니다. 저장소 Secret을 새 값으로 교체해야 합니다.")
 
     report_link = {"web_url": report_url, "mobile_web_url": report_url}
-    message_text = f"{summary[:140]}\n{report_url}"[:200]
     template = {
         "object_type": "text",
-        "text": message_text,
+        "text": summary[:180],
         "link": report_link,
+        "buttons": [{"title": "리포트 보기", "link": report_link}],
     }
     result = post(
         "https://kapi.kakao.com/v2/api/talk/memo/default/send",
