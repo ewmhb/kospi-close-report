@@ -22,7 +22,8 @@ permissions:
 
 concurrency:
   group: pages
-  cancel-in-progress: true
+  # A delayed primary schedule must not be cancelled by a backup schedule.
+  cancel-in-progress: false
 
 jobs:
   report:
