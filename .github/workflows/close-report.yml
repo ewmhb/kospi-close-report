@@ -8,12 +8,6 @@ on:
         required: false
         type: boolean
         default: false
-  push:
-    branches:
-      - main
-    paths:
-      - "hynix-nq.html"
-      - ".github/workflows/close-report.yml"
   schedule:
     # Redundant weekday schedules. GitHub cron uses UTC.
     # 16:20 / 16:40 / 17:00 KST
@@ -90,12 +84,14 @@ jobs:
 
           from pykrx import stock
 
-          # Manual runs and page-only pushes are tests and may run on weekends or exchange holidays.
+          # Manual runs are tests and may run on weekends or exchange holidays.
           if os.environ.get("GITHUB_EVENT_NAME") != "schedule":
               is_open = True
-              reason = "manual/page deployment run"
+              reason = "manual test run"
           else:
               today = datetime.now(ZoneInfo("Asia/Seoul")).strftime("%Y%m%d")
+              # Use one liquid ticker's daily series. The all-ticker endpoint
+              # can return an unexpected schema and raise inside pykrx.
               quotes = stock.get_market_ohlcv_by_date(
                   today,
                   today,
@@ -125,10 +121,6 @@ jobs:
           summary=$(python scripts/generate_report.py | tail -n 1)
           echo "summary=$summary" >> "$GITHUB_OUTPUT"
 
-      - name: Add Hynix-NQ comparison page
-        if: steps.trading_day.outputs.is_open == 'true'
-        run: cp hynix-nq.html site/hynix-nq.html
-
       - uses: actions/configure-pages@v5
         if: steps.trading_day.outputs.is_open == 'true'
 
@@ -143,7 +135,7 @@ jobs:
         uses: actions/deploy-pages@v4
 
       - name: Send KakaoTalk notification
-        if: steps.trading_day.outputs.is_open == 'true' && github.event_name != 'push'
+        if: steps.trading_day.outputs.is_open == 'true'
         env:
           KAKAO_REST_API_KEY: ${{ secrets.KAKAO_REST_API_KEY }}
           KAKAO_CLIENT_SECRET: ${{ secrets.KAKAO_CLIENT_SECRET }}
