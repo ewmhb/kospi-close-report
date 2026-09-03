@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>SK하이닉스 × 나스닥100 선물 1분 비교</title>
+  <style>
+    :root{color-scheme:dark;--bg:#090d14;--panel:#111827;--line:#243041;--text:#e5edf7;--muted:#8ea0b5}
+    *{box-sizing:border-box} body{margin:0;background:var(--bg);color:var(--text);font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+    .shell{max-width:1800px;margin:0 auto;padding:16px}.head{display:flex;gap:16px;align-items:flex-end;justify-content:space-between;margin-bottom:12px}
+    h1{font-size:22px;margin:0 0 6px}.sub{margin:0;color:var(--muted);font-size:13px;line-height:1.5}.actions{display:flex;gap:8px;flex-wrap:wrap}
+    button,a.btn{border:1px solid var(--line);background:#151d2a;color:var(--text);padding:8px 11px;border-radius:8px;text-decoration:none;font-size:13px;cursor:pointer}
+    .status{display:flex;gap:8px;flex-wrap:wrap;margin:10px 0 14px}.chip{border:1px solid var(--line);border-radius:999px;padding:6px 10px;font-size:12px;color:var(--muted)}.chip b{color:var(--text)}
+    .grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}.card{background:var(--panel);border:1px solid var(--line);border-radius:12px;overflow:hidden;min-width:0}.card-head{display:flex;justify-content:space-between;gap:10px;padding:10px 12px;border-bottom:1px solid var(--line)}
+    .card-head strong{font-size:14px}.card-head span{font-size:12px;color:var(--muted)}.chart{height:calc(100vh - 185px);min-height:620px}.tv{height:100%}
+    .note{margin-top:12px;border:1px solid var(--line);border-radius:10px;padding:10px 12px;color:var(--muted);font-size:12px;line-height:1.55}.note b{color:var(--text)}
+    @media(max-width:900px){.head{align-items:flex-start;flex-direction:column}.grid{grid-template-columns:1fr}.chart{height:68vh;min-height:520px}}
+  </style>
+</head>
+<body>
+  <main class="shell">
+    <header class="head">
+      <div>
+        <h1>SK하이닉스 × NASDAQ-100 선물</h1>
+        <p class="sub">동일 화면 · 1분봉 · 한국시간(Asia/Seoul) 기준. 왼쪽 하이닉스, 오른쪽 NQ 연속선물입니다.</p>
+      </div>
+      <div class="actions">
+        <button type="button" onclick="location.reload()">새로고침</button>
+        <a class="btn" href="./">코스피 장마감 리포트</a>
+      </div>
+    </header>
+
+    <div class="status">
+      <span class="chip"><b>SK하이닉스</b> KRX:000660</span>
+      <span class="chip"><b>NASDAQ-100 선물</b> CME_MINI:NQ1!</span>
+      <span class="chip"><b>간격</b> 1분</span>
+      <span class="chip"><b>시간대</b> 서울</span>
+    </div>
+
+    <section class="grid">
+      <article class="card">
+        <div class="card-head"><strong>SK하이닉스 000660</strong><span>KRX · 1분</span></div>
+        <div class="chart"><div id="hynixChart" class="tv tradingview-widget-container"></div></div>
+      </article>
+      <article class="card">
+        <div class="card-head"><strong>NASDAQ-100 E-mini 선물 NQ1!</strong><span>CME · 1분</span></div>
+        <div class="chart"><div id="nqChart" class="tv tradingview-widget-container"></div></div>
+      </article>
+    </section>
+
+    <div class="note"><b>참고:</b> TradingView 제공 데이터 기준입니다. 거래소/계정 정책에 따라 실시간이 아닌 지연 데이터일 수 있고, SK하이닉스의 정규장 이후 거래가 해당 심볼에 제공되지 않으면 차트에도 표시되지 않습니다. NQ는 연속선물(NQ1!)입니다.</div>
+  </main>
+
+  <script>
+    function mountChart(targetId, symbol){
+      const host=document.getElementById(targetId);
+      const script=document.createElement('script');
+      script.type='text/javascript';
+      script.src='https://s3.tradingview.com/external-embedding/embed-widget-advanced-chart.js';
+      script.async=true;
+      script.innerHTML=JSON.stringify({
+        autosize:true,
+        symbol:symbol,
+        interval:'1',
+        timezone:'Asia/Seoul',
+        theme:'dark',
+        style:'1',
+        locale:'kr',
+        withdateranges:true,
+        hide_side_toolbar:false,
+        allow_symbol_change:false,
+        save_image:false,
+        calendar:false,
+        support_host:'https://www.tradingview.com'
+      });
+      host.appendChild(script);
+    }
+    mountChart('hynixChart','KRX:000660');
+    mountChart('nqChart','CME_MINI:NQ1!');
+  </script>
+</body>
+</html>
