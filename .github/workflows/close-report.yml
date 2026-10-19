@@ -1,18 +1,17 @@
-name: KOSPI close report
+name: Archive KOSPI close report
 
 on:
   workflow_dispatch:
     inputs:
       send_to_friends:
-        description: "Send this manual run to connected KakaoTalk friends"
+        description: "Send the existing GCS report link to connected KakaoTalk friends"
         required: false
         type: boolean
         default: false
   schedule:
-    # Redundant weekday schedules. GitHub cron uses UTC.
-    # First attempt at 17:00 KST; retry at 18:00 if report generation failed.
-    - cron: "0 8 * * 1-5"
-    - cron: "0 9 * * 1-5"
+    # GitHub cron is UTC. Fetch the GCS report after its 17:00 / 18:00 KST production.
+    - cron: "10 8 * * 1-5"
+    - cron: "10 9 * * 1-5"
 
 permissions:
   contents: write
@@ -20,12 +19,11 @@ permissions:
   id-token: write
 
 concurrency:
-  group: pages
-  # A delayed primary schedule must not be cancelled by a backup schedule.
+  group: kospi-pages
   cancel-in-progress: false
 
 jobs:
-  report:
+  archive:
     runs-on: ubuntu-latest
     environment:
       name: github-pages
@@ -33,114 +31,69 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Resolve KST date
-        if: github.event_name == 'schedule'
-        id: kst_date
+      - name: Copy the GCS report without regenerating it
+        id: archive
         shell: bash
-        run: echo "date=$(TZ=Asia/Seoul date +%Y%m%d)" >> "$GITHUB_OUTPUT"
-
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-          cache: pip
-
-      - name: Restore last successful report data
-        uses: actions/cache@v4
-        with:
-          path: work/cache/*.json
-          key: report-data-${{ github.run_id }}
-          restore-keys: |
-            report-data-
-            investor-flow-
-
-      - name: Install dependencies
-        run: pip install -r requirements.txt
-
-      - name: Check KOSPI trading day
-        id: trading_day
-        shell: bash
-        run: |
-          python - <<'PY'
-          import os
-          from datetime import datetime
-          from zoneinfo import ZoneInfo
-
-          from pykrx import stock
-
-          # Manual runs are tests and may run on weekends or exchange holidays.
-          if os.environ.get("GITHUB_EVENT_NAME") != "schedule":
-              is_open = True
-              reason = "manual test run"
-          else:
-              today = datetime.now(ZoneInfo("Asia/Seoul")).strftime("%Y%m%d")
-              # Use one liquid ticker's daily series. The all-ticker endpoint
-              # can return an unexpected schema and raise inside pykrx.
-              quotes = stock.get_market_ohlcv_by_date(
-                  today,
-                  today,
-                  "005930",
-                  adjusted=False,
-              )
-              is_open = (
-                  not quotes.empty
-                  and (quotes.index.strftime("%Y%m%d") == today).any()
-              )
-              reason = f"KOSPI trading data for {today}"
-
-          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
-              output.write(f"is_open={str(is_open).lower()}\n")
-          with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as summary:
-              status = "open" if is_open else "closed"
-              summary.write(f"## KOSPI market: {status}\n\n{reason}\n")
-          print(f"Trading-day check: {is_open} ({reason})")
-          PY
-
-      - id: generate
-        if: steps.trading_day.outputs.is_open == 'true'
         env:
-          ECOS_API_KEY: ${{ secrets.ECOS_API_KEY }}
-          DATA_REFRESH_MODE: ${{ github.event.schedule == '0 9 * * 1-5' && 'followup' || 'initial' }}
+          REPORT_URL: https://storage.googleapis.com/hip-girder-355005-market-reports/kospi/index.html
         run: |
-          set -o pipefail
-          summary=$(python scripts/generate_report.py | tail -n 1)
-          echo "summary=$summary" >> "$GITHUB_OUTPUT"
+          set -euo pipefail
+          report_date=$(TZ=Asia/Seoul date +%F)
+          mkdir -p site/archive
+          curl --fail --location --retry 2 --retry-delay 5 "$REPORT_URL" -o "site/archive/$report_date.html"
+          test -s "site/archive/$report_date.html"
+          cp "site/archive/$report_date.html" site/index.html
+          {
+            echo '<!doctype html><html lang="ko"><head><meta charset="utf-8"><title>코스피 장마감 리포트 아카이브</title></head><body>'
+            echo '<h1>코스피 장마감 리포트 아카이브</h1><ul>'
+            for file in $(find site/archive -maxdepth 1 -type f -name '????-??-??.html' -printf '%f\n' | sort -r); do
+              printf '<li><a href="%s">%s</a></li>\n' "$file" "${file%.html}"
+            done
+            echo '</ul></body></html>'
+          } > site/archive/index.html
+          echo "date=$report_date" >> "$GITHUB_OUTPUT"
 
-      - name: Save dated report archive
-        if: steps.trading_day.outputs.is_open == 'true'
+      - name: Save the copied report archive
         shell: bash
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add site/archive
+          git add site/index.html site/archive
           if git diff --cached --quiet; then
             echo "No archive changes to commit."
           else
-            git commit -m "Archive report for $(TZ=Asia/Seoul date +%F)"
+            git commit -m "Archive GCS KOSPI report for ${{ steps.archive.outputs.date }}"
             git push
           fi
 
       - uses: actions/configure-pages@v5
-        if: steps.trading_day.outputs.is_open == 'true'
 
       - uses: actions/upload-pages-artifact@v3
-        if: steps.trading_day.outputs.is_open == 'true'
         with:
           path: site
 
       - name: Deploy GitHub Pages
-        if: steps.trading_day.outputs.is_open == 'true'
         id: deployment
         uses: actions/deploy-pages@v4
 
-      - name: Send KakaoTalk notification
-        if: steps.trading_day.outputs.is_open == 'true' && (github.event_name != 'schedule' || github.event.schedule == '0 8 * * 1-5')
+      - uses: actions/setup-python@v5
+        if: github.event_name == 'schedule' && github.event.schedule == '10 8 * * 1-5' || inputs.send_to_friends == true
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install notification dependencies
+        if: github.event_name == 'schedule' && github.event.schedule == '10 8 * * 1-5' || inputs.send_to_friends == true
+        run: pip install -r requirements.txt
+
+      - name: Send the original GCS URL by KakaoTalk
+        if: github.event_name == 'schedule' && github.event.schedule == '10 8 * * 1-5' || inputs.send_to_friends == true
         env:
           KAKAO_REST_API_KEY: ${{ secrets.KAKAO_REST_API_KEY }}
           KAKAO_CLIENT_SECRET: ${{ secrets.KAKAO_CLIENT_SECRET }}
           KAKAO_REFRESH_TOKEN: ${{ secrets.KAKAO_REFRESH_TOKEN }}
-          REPORT_URL: ${{ steps.deployment.outputs.page_url }}
-          REPORT_SUMMARY: ${{ steps.generate.outputs.summary }}
-          SEND_TO_FRIENDS: ${{ github.event_name == 'schedule' || inputs.send_to_friends == true }}
+          REPORT_URL: https://storage.googleapis.com/hip-girder-355005-market-reports/kospi/index.html
+          REPORT_SUMMARY: "코스피 장마감 리포트 (${{ steps.archive.outputs.date }})"
+          SEND_TO_FRIENDS: "true"
           KAKAO_EXPECTED_FRIEND_COUNT: "3"
         run: python scripts/send_kakao.py
-
