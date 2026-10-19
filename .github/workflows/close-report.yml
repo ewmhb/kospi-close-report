@@ -10,10 +10,9 @@ on:
         default: false
   schedule:
     # Redundant weekday schedules. GitHub cron uses UTC.
-    # 16:20 / 16:40 / 17:00 KST
-    - cron: "20 7 * * 1-5"
-    - cron: "40 7 * * 1-5"
+    # First attempt at 17:00 KST; retry at 18:00 if report generation failed.
     - cron: "0 8 * * 1-5"
+    - cron: "0 9 * * 1-5"
 
 permissions:
   contents: read
@@ -143,6 +142,7 @@ jobs:
           REPORT_URL: ${{ steps.deployment.outputs.page_url }}
           REPORT_SUMMARY: ${{ steps.generate.outputs.summary }}
           SEND_TO_FRIENDS: ${{ github.event_name == 'schedule' || inputs.send_to_friends == true }}
+          KAKAO_EXPECTED_FRIEND_COUNT: "3"
         run: python scripts/send_kakao.py
 
       - name: Mark today's scheduled KakaoTalk send as successful
