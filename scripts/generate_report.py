@@ -326,6 +326,24 @@ def validate_report(html, now):
     failed=[name for name,ok in checks.items() if not ok]
     if failed: raise RuntimeError("발송 전 리포트 검사 실패: "+", ".join(failed))
 
+def save_archive(html, now, title):
+    archive_dir=OUT.parent/"archive"
+    archive_dir.mkdir(parents=True,exist_ok=True)
+    daily_path=archive_dir/f"{now:%Y-%m-%d}.html"
+    daily_path.write_text(html,encoding="utf-8")
+    entries=sorted(
+        (path for path in archive_dir.glob("*.html") if path.name!="index.html"),
+        key=lambda path:path.name,
+        reverse=True,
+    )
+    links="".join(
+        f'<li><a href="{escape(path.name)}">{escape(path.stem)}</a></li>'
+        for path in entries
+    )
+    index_html=f"""<!doctype html><html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>{escape(title)} 아카이브</title><style>body{{max-width:760px;margin:48px auto;padding:0 20px;font-family:system-ui,sans-serif;line-height:1.6;color:#18202a}}a{{color:#0866c6}}li{{margin:10px 0}}</style></head><body><h1>{escape(title)} 아카이브</h1><p>날짜별 장 마감 리포트 원문입니다.</p><ul>{links}</ul></body></html>"""
+    (archive_dir/"index.html").write_text(index_html,encoding="utf-8")
+
+
 def main():
     now=datetime.now(KST); kospi,kospi_change,kospi_history=quote_history("^KS11"); fx,fx_change,fx_history=quote_history("KRW=X")
     leaders=[]
@@ -367,6 +385,6 @@ def main():
     html=html.replace('<div class="badge">장 마감 리포트</div>','<div class="badge">장 마감 리포트</div>'+status_html(),1)
     html=html.replace('<p>미국 증시 · 반도체 · 환율 · 외국인 수급</p>',f'<p>{escape(watch)}</p>',1)
     validate_report(html,now)
-    OUT.parent.mkdir(parents=True,exist_ok=True); OUT.write_text(html,encoding="utf-8"); print(summary)
+    OUT.parent.mkdir(parents=True,exist_ok=True); OUT.write_text(html,encoding="utf-8"); save_archive(html,now,"KOSPI Closing Brief"); print(summary)
 
 if __name__=="__main__": main()
