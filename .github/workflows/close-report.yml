@@ -39,26 +39,12 @@ jobs:
         shell: bash
         run: echo "date=$(TZ=Asia/Seoul date +%Y%m%d)" >> "$GITHUB_OUTPUT"
 
-      - name: Restore today's successful-send marker
-        if: github.event_name == 'schedule'
-        id: sent_cache
-        uses: actions/cache@v4
-        with:
-          path: work/sent-marker
-          key: kospi-kakao-sent-${{ steps.kst_date.outputs.date }}
-
-      - name: Skip duplicate scheduled run
-        if: github.event_name == 'schedule' && steps.sent_cache.outputs.cache-hit == 'true'
-        run: echo "KakaoTalk report was already sent successfully today. Skipping this retry."
-
       - uses: actions/setup-python@v5
-        if: github.event_name != 'schedule' || steps.sent_cache.outputs.cache-hit != 'true'
         with:
           python-version: "3.12"
           cache: pip
 
       - name: Restore last successful report data
-        if: github.event_name != 'schedule' || steps.sent_cache.outputs.cache-hit != 'true'
         uses: actions/cache@v4
         with:
           path: work/cache/*.json
@@ -68,11 +54,9 @@ jobs:
             investor-flow-
 
       - name: Install dependencies
-        if: github.event_name != 'schedule' || steps.sent_cache.outputs.cache-hit != 'true'
         run: pip install -r requirements.txt
 
       - name: Check KOSPI trading day
-        if: github.event_name != 'schedule' || steps.sent_cache.outputs.cache-hit != 'true'
         id: trading_day
         shell: bash
         run: |
@@ -115,6 +99,7 @@ jobs:
         if: steps.trading_day.outputs.is_open == 'true'
         env:
           ECOS_API_KEY: ${{ secrets.ECOS_API_KEY }}
+          DATA_REFRESH_MODE: ${{ github.event.schedule == '0 9 * * 1-5' && 'followup' || 'initial' }}
         run: |
           set -o pipefail
           summary=$(python scripts/generate_report.py | tail -n 1)
@@ -134,7 +119,7 @@ jobs:
         uses: actions/deploy-pages@v4
 
       - name: Send KakaoTalk notification
-        if: steps.trading_day.outputs.is_open == 'true'
+        if: steps.trading_day.outputs.is_open == 'true' && (github.event_name != 'schedule' || github.event.schedule == '0 8 * * 1-5')
         env:
           KAKAO_REST_API_KEY: ${{ secrets.KAKAO_REST_API_KEY }}
           KAKAO_CLIENT_SECRET: ${{ secrets.KAKAO_CLIENT_SECRET }}
@@ -145,9 +130,3 @@ jobs:
           KAKAO_EXPECTED_FRIEND_COUNT: "3"
         run: python scripts/send_kakao.py
 
-      - name: Mark today's scheduled KakaoTalk send as successful
-        if: github.event_name == 'schedule' && steps.trading_day.outputs.is_open == 'true' && success()
-        shell: bash
-        run: |
-          mkdir -p work/sent-marker
-          echo "sent_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)" > work/sent-marker/sent.txt
