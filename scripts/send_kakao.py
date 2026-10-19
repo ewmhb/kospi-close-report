@@ -70,6 +70,12 @@ def main():
         print("카카오톡 수신 가능한 앱 친구가 없어 친구 발송을 건너뜁니다.")
         return
 
+    expected_count = int(os.environ.get("KAKAO_EXPECTED_FRIEND_COUNT", "0"))
+    if expected_count and len(receiver_uuids) != expected_count:
+        raise RuntimeError(
+            f"친구 수신자 확인 실패: 대상 {len(receiver_uuids)}명, 기대 {expected_count}명"
+        )
+
     sent_count = 0
     for start in range(0, len(receiver_uuids), 5):
         batch = receiver_uuids[start:start + 5]
