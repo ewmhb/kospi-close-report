@@ -2,12 +2,6 @@ name: Archive KOSPI close report
 
 on:
   workflow_dispatch:
-    inputs:
-      send_to_friends:
-        description: "Send the existing GCS report link to connected KakaoTalk friends"
-        required: false
-        type: boolean
-        default: false
   schedule:
     # GitHub cron is UTC. Fetch the GCS report after its 17:00 / 18:00 KST production.
     - cron: "10 8 * * 1-5"
@@ -75,25 +69,3 @@ jobs:
       - name: Deploy GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4
-
-      - uses: actions/setup-python@v5
-        if: github.event_name == 'schedule' && github.event.schedule == '10 8 * * 1-5' || inputs.send_to_friends == true
-        with:
-          python-version: "3.12"
-          cache: pip
-
-      - name: Install notification dependencies
-        if: github.event_name == 'schedule' && github.event.schedule == '10 8 * * 1-5' || inputs.send_to_friends == true
-        run: pip install -r requirements.txt
-
-      - name: Send the original GCS URL by KakaoTalk
-        if: github.event_name == 'schedule' && github.event.schedule == '10 8 * * 1-5' || inputs.send_to_friends == true
-        env:
-          KAKAO_REST_API_KEY: ${{ secrets.KAKAO_REST_API_KEY }}
-          KAKAO_CLIENT_SECRET: ${{ secrets.KAKAO_CLIENT_SECRET }}
-          KAKAO_REFRESH_TOKEN: ${{ secrets.KAKAO_REFRESH_TOKEN }}
-          REPORT_URL: https://storage.googleapis.com/hip-girder-355005-market-reports/kospi/index.html
-          REPORT_SUMMARY: "코스피 장마감 리포트 (${{ steps.archive.outputs.date }})"
-          SEND_TO_FRIENDS: "true"
-          KAKAO_EXPECTED_FRIEND_COUNT: "3"
-        run: python scripts/send_kakao.py
