@@ -80,15 +80,25 @@ def investor_krx(now):
         except Exception as exc: last=exc
     raise RuntimeError(f"KRX 수급 데이터 없음: {last}")
 def flow_html(now):
-    stale=False
-    for source, fn in (("네이버증권",investor_naver),("KRX",investor_krx)):
+    expected_date = now.strftime("%m.%d")
+    errors = []
+    for source, fn in (("네이버증권", investor_naver), ("KRX", investor_krx)):
         try:
-            date, flows=fn(now); save(FLOW_CACHE,{"date":date,"flows":flows,"source":source}); break
-        except Exception as exc: print(f"{source} 수급 조회 실패: {exc}")
-    else:
-        d=load(FLOW_CACHE); date,flows,source,stale=d["date"],d["flows"],f'최근 저장값({d.get("source","이전 조회")})',True
-    rows="".join(f'<li><span>{name}</span>{signed(value,"억원","순매수" if value>0 else "순매도" if value<0 else "보합")}</li>' for name,value in flows.items())
-    return f'<ul>{rows}</ul><p class="muted source">{date} · {source}{" · 실시간 조회 실패로 직전 정상값" if stale else ""} · 단위: 억원</p>'
+            date, flows = fn(now)
+            if date[-5:] != expected_date:
+                raise RuntimeError(f"당일 데이터가 아님: {date}")
+            if "외국인" not in flows:
+                raise RuntimeError("외국인 수급값이 없음")
+            save(FLOW_CACHE, {"date": date, "flows": flows, "source": source})
+            rows = "".join(
+                f'<li><span>{name}</span>{signed(value,"억원","순매수" if value>0 else "순매도" if value<0 else "보합")}</li>'
+                for name, value in flows.items()
+            )
+            return f'<ul>{rows}</ul><p class="muted source">{date} · {source} · 단위: 억원</p>'
+        except Exception as exc:
+            errors.append(f"{source}: {exc}")
+            print(f"{source} 수급 조회 실패: {exc}")
+    raise RuntimeError("당일 외국인 수급 데이터가 준비되지 않았습니다: " + "; ".join(errors))
 
 def breadth_naver(now):
     raw=fetch("https://finance.naver.com/sise/sise_index.naver?code=KOSPI", "euc-kr")
@@ -166,8 +176,7 @@ def leader_history_html(code, now):
             break
         except Exception as exc: print(f"종목 5일 데이터 조회 실패({code}): {exc}")
     if not data:
-        DATA_WARNINGS.append(f"{code} 상세 조회 실패")
-        return '<div class="muted stock-error">최근 5거래일 상세 데이터를 불러오지 못했습니다.</div>'
+        raise RuntimeError(f"주요 종목 상세 데이터가 준비되지 않았습니다: {code}")
     rows="".join(f'<tr><td>{day}</td><td class="num">{close:,.0f}원</td><td>{signed(personal,"주")}</td><td>{signed(foreign,"주")}</td><td>{signed(institution,"주")}</td></tr>' for day,close,personal,foreign,institution in data)
     return '<div class="stock-table-wrap"><table class="stock-table"><thead><tr><th>날짜</th><th>종가</th><th>개인(추정)</th><th>외국인</th><th>기관</th></tr></thead><tbody>'+rows+f'</tbody></table><div class="muted stock-note">순매수량 · 단위: 주 · {source}</div></div>'
 
@@ -187,6 +196,8 @@ def sector_html():
         sector_change=changes.get(sector_ticker,0.0)
         if sector_ticker not in changes: DATA_WARNINGS.append(f"{sector} 섹터 조회 실패")
         available=[(name,changes[ticker]) for name,ticker in candidates if ticker in changes]
+        if sector == "반도체" and (sector_ticker not in changes or not available):
+            raise RuntimeError("한국 반도체 반응 데이터가 준비되지 않았습니다.")
         stock_name,stock_change=max(available,key=lambda x:abs(x[1])) if available else ("조회 실패",0.0)
         cards.append(f'<div class="sector-item"><div class="sector-head"><strong>{escape(sector)}</strong>{signed(sector_change,"%")}</div><div class="sector-stock"><span>오늘의 주요 종목 · {escape(stock_name)}</span>{signed(stock_change,"%")}</div></div>')
     return '<div class="sector-grid">'+"".join(cards)+'</div><p class="muted source">섹터 등락률은 국내 섹터 ETF 기준 · 주요 종목은 후보군 중 당일 절대 등락률이 가장 큰 종목이며 투자 추천이 아닙니다.</p>',changes
@@ -309,10 +320,15 @@ def validate_report(html, now):
 
 def main():
     now=datetime.now(KST); kospi,kospi_change,kospi_history=quote_history("^KS11"); fx,fx_change,fx_history=quote_history("KRW=X")
-    leaders=[]
-    for name,(code,ticker) in LEADERS.items():
-        try: leaders.append((name,code,quote(ticker)[1]))
-        except Exception: leaders.append((name,code,0.0))
+    leaders = []
+    missing_leaders = []
+    for name, (code, ticker) in LEADERS.items():
+        try:
+            leaders.append((name, code, quote(ticker)[1]))
+        except Exception as exc:
+            missing_leaders.append(f"{name}: {exc}")
+    if missing_leaders:
+        raise RuntimeError("주요 종목 당일 데이터가 준비되지 않았습니다: " + "; ".join(missing_leaders))
     tone="강세" if kospi_change>.5 else "약세" if kospi_change<-.5 else "보합권"
     summary=f"코스피는 {kospi:,.2f}로 마감해 전 거래일 대비 {kospi_change:+.2f}%를 기록했습니다. 시장은 {tone} 흐름을 보였습니다."
     investors,health,bond,news=flow_html(now),health_html(now),yield_html(),news_html(now)
