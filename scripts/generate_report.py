@@ -15,6 +15,13 @@ OUT, CACHE = Path("site/index.html"), Path("work/cache")
 FLOW_CACHE, BREADTH_CACHE = CACHE / "investor-flow.json", CACHE / "market-breadth.json"
 YIELD_CACHE, NEWS_CACHE = CACHE / "korea-10y-yield.json", CACHE / "news.json"
 DATA_WARNINGS=[]
+REFRESH_MODE=os.getenv("DATA_REFRESH_MODE","initial")
+
+def unavailable(label):
+    message="조회 실패" if REFRESH_MODE=="followup" else "18시 이후 확인"
+    DATA_WARNINGS.append(f"{label}: {message}")
+    print(f"DATA_UNAVAILABLE mode={REFRESH_MODE} label={label} status={message}")
+    return message
 LEADERS = {"삼성전자":("005930","005930.KS"),"SK하이닉스":("000660","000660.KS"),"현대차":("005380","005380.KS"),"삼성바이오로직스":("207940","207940.KS"),"LG에너지솔루션":("373220","373220.KS")}
 SECTORS = {
     "반도체":("091230.KS",[("삼성전자","005930.KS"),("SK하이닉스","000660.KS"),("DB하이텍","000990.KS")]),
@@ -98,7 +105,8 @@ def flow_html(now):
         except Exception as exc:
             errors.append(f"{source}: {exc}")
             print(f"{source} 수급 조회 실패: {exc}")
-    raise RuntimeError("당일 외국인 수급 데이터가 준비되지 않았습니다: " + "; ".join(errors))
+    status = unavailable("외국인 수급")
+    return f'<div class="muted stock-error">{status}</div>'
 
 def breadth_naver(now):
     raw=fetch("https://finance.naver.com/sise/sise_index.naver?code=KOSPI", "euc-kr")
@@ -176,10 +184,9 @@ def leader_history_html(code, now):
             break
         except Exception as exc: print(f"종목 5일 데이터 조회 실패({code}): {exc}")
     if not data:
-        raise RuntimeError(f"주요 종목 상세 데이터가 준비되지 않았습니다: {code}")
+        return f'<div class="muted stock-error">{unavailable(code+" 주요 종목 상세 수급")}</div>'
     rows="".join(f'<tr><td>{day}</td><td class="num">{close:,.0f}원</td><td>{signed(personal,"주")}</td><td>{signed(foreign,"주")}</td><td>{signed(institution,"주")}</td></tr>' for day,close,personal,foreign,institution in data)
     return '<div class="stock-table-wrap"><table class="stock-table"><thead><tr><th>날짜</th><th>종가</th><th>개인(추정)</th><th>외국인</th><th>기관</th></tr></thead><tbody>'+rows+f'</tbody></table><div class="muted stock-note">순매수량 · 단위: 주 · {source}</div></div>'
-
 
 def sector_html():
     all_tickers=[]
@@ -193,15 +200,16 @@ def sector_html():
         except Exception as exc: print(f"섹터 구성 종목 조회 실패({ticker}): {exc}")
     cards=[]
     for sector,(sector_ticker,candidates) in SECTORS.items():
-        sector_change=changes.get(sector_ticker,0.0)
-        if sector_ticker not in changes: DATA_WARNINGS.append(f"{sector} 섹터 조회 실패")
         available=[(name,changes[ticker]) for name,ticker in candidates if ticker in changes]
         if sector == "반도체" and (sector_ticker not in changes or not available):
-            raise RuntimeError("한국 반도체 반응 데이터가 준비되지 않았습니다.")
+            status=unavailable("한국 반도체 반응")
+            cards.append(f'<div class="sector-item"><div class="sector-head"><strong>{escape(sector)}</strong><span class="flat">{status}</span></div><div class="sector-stock"><span>오늘의 주요 종목</span><span class="flat">{status}</span></div></div>')
+            continue
+        sector_change=changes.get(sector_ticker,0.0)
+        if sector_ticker not in changes: DATA_WARNINGS.append(f"{sector} 섹터 조회 실패")
         stock_name,stock_change=max(available,key=lambda x:abs(x[1])) if available else ("조회 실패",0.0)
         cards.append(f'<div class="sector-item"><div class="sector-head"><strong>{escape(sector)}</strong>{signed(sector_change,"%")}</div><div class="sector-stock"><span>오늘의 주요 종목 · {escape(stock_name)}</span>{signed(stock_change,"%")}</div></div>')
     return '<div class="sector-grid">'+"".join(cards)+'</div><p class="muted source">섹터 등락률은 국내 섹터 ETF 기준 · 주요 종목은 후보군 중 당일 절대 등락률이 가장 큰 종목이며 투자 추천이 아닙니다.</p>',changes
-
 
 def korea_10y_naver():
     history=[]
@@ -320,22 +328,23 @@ def validate_report(html, now):
 
 def main():
     now=datetime.now(KST); kospi,kospi_change,kospi_history=quote_history("^KS11"); fx,fx_change,fx_history=quote_history("KRW=X")
-    leaders = []
-    missing_leaders = []
-    for name, (code, ticker) in LEADERS.items():
-        try:
-            leaders.append((name, code, quote(ticker)[1]))
+    leaders=[]
+    for name,(code,ticker) in LEADERS.items():
+        try: leaders.append((name,code,quote(ticker)[1]))
         except Exception as exc:
-            missing_leaders.append(f"{name}: {exc}")
-    if missing_leaders:
-        raise RuntimeError("주요 종목 당일 데이터가 준비되지 않았습니다: " + "; ".join(missing_leaders))
+            print(f"주요 종목 조회 실패({name}): {exc}")
+            leaders.append((name,code,None))
     tone="강세" if kospi_change>.5 else "약세" if kospi_change<-.5 else "보합권"
     summary=f"코스피는 {kospi:,.2f}로 마감해 전 거래일 대비 {kospi_change:+.2f}%를 기록했습니다. 시장은 {tone} 흐름을 보였습니다."
     investors,health,bond,news=flow_html(now),health_html(now),yield_html(),news_html(now)
     sectors,sector_changes=sector_html(); watch=watchpoints(kospi_change,fx_change,sector_changes)
     kospi_chart=trend_chart(kospi_history,"KOSPI 최근 60거래일 추이","{:,.0f}")
     fx_chart=trend_chart(fx_history,"원·달러 환율 최근 60거래일 추이","{:,.0f}원")
-    leader_html="".join(f'<li class="leader-row"><details class="stock-detail"><summary><span>{escape(n)}</span>{signed(p,"%")}</summary>{leader_history_html(code,now)}</details></li>' for n,code,p in leaders)
+    leader_rows=[]
+    for name,code,change in leaders:
+        change_html=signed(change,"%") if change is not None else f'<span class="flat">{unavailable(name+" 당일 가격")}</span>'
+        leader_rows.append(f'<li class="leader-row"><details class="stock-detail"><summary><span>{escape(name)}</span>{change_html}</summary>{leader_history_html(code,now)}</details></li>')
+    leader_html="".join(leader_rows)
     stock_style='''.leader-row{display:block}.stock-detail{width:100%}.stock-detail summary{display:flex;justify-content:space-between;gap:14px;cursor:pointer;list-style:none}.stock-detail summary::-webkit-details-marker{display:none}.stock-detail summary span:first-child:before{content:"＋";color:var(--accent);margin-right:8px}.stock-detail[open] summary span:first-child:before{content:"－"}.stock-table-wrap{overflow-x:auto;margin-top:14px;padding-top:12px;border-top:1px solid var(--line)}.stock-table{width:100%;min-width:520px;border-collapse:collapse;font-size:12px}.stock-table th,.stock-table td{padding:9px 7px;text-align:right;white-space:nowrap;border-bottom:1px solid #1b3047}.stock-table th:first-child,.stock-table td:first-child{text-align:left}.stock-table th{color:var(--muted);font-weight:700}.stock-table .num{color:var(--text);font-weight:700}.stock-note{margin-top:9px;text-align:right}.stock-error{padding:16px 0 4px}'''
     stock_style+='''.sector-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}.sector-item{border:1px solid var(--line);border-radius:14px;padding:14px;background:#0b1929}.sector-head,.sector-stock{display:flex;justify-content:space-between;align-items:center;gap:10px}.sector-head strong{font-size:15px}.sector-stock{margin-top:10px;padding-top:10px;border-top:1px solid #1b3047;color:var(--muted);font-size:12px}.sector-stock .up,.sector-stock .down,.sector-stock .flat{font-size:12px;white-space:nowrap}@media(max-width:760px){.sector-grid{grid-template-columns:1fr 1fr}}@media(max-width:480px){.sector-grid{grid-template-columns:1fr}}'''
     stock_style+='''.status{margin-top:8px;border-radius:99px;padding:6px 10px;font-size:11px;text-align:center}.status.ok{color:#bdeedc;border:1px solid #2c5b50;background:#0c2a24}.status.warn{color:#ffd38b;border:1px solid #6b512b;background:#2a2112}'''
